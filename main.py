@@ -6,6 +6,7 @@ import threading
 import time
 from algorithms.exif import exif_reading
 from algorithms.haar import haar_detection
+from algorithms.shadow import analyze_shadow
 
 class OSINTApp(ctk.CTk):
     def __init__(self):
@@ -15,6 +16,9 @@ class OSINTApp(ctk.CTk):
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
         OSINTApp.exif_reading = exif_reading
+        OSINTApp.haar_detection = haar_detection
+
+
 
         # Változók
         self.image = None
@@ -194,17 +198,36 @@ class OSINTApp(ctk.CTk):
         except Exception as e:
             self.log("error", "PLATE", f"Hiba: {str(e)}")
 
+
     def shadow_analysis(self):
         """Árnyék alapú helymeghatározás"""
         try:
             self.log("info", "SHADOW", "Árnyékok elemzése...")
-            time.sleep(1)
             
-            # Példa: zöld vonal az árnyék irányában
-            self.canvas.create_line(200, 200, 300, 300, fill="#54a0ff", width=3)
-            self.log("success", "SHADOW", "Becsült szélességi fok: ~47°N")
+            # Call the module function directly
+            shadow_results = analyze_shadow(self.image_path)
+            
+            if not shadow_results or shadow_results["shadow_direction"] is None:
+                self.log("warning", "SHADOW", "Nem sikerült elemezni az árnyékokat.")
+                return
+            
+            # Eredmények megjelenítése
+            angle = shadow_results["shadow_direction"]
+            lat = shadow_results["estimated_latitude"]
+            
+            # Vonalak rajzolása (átalakítva a PIL koordinátarendszerébe)
+            if "detected_lines" in shadow_results:
+                for line in shadow_results["detected_lines"]:
+                    x1, y1, x2, y2 = line[0]
+                    self.canvas.create_line(x1, y1, x2, y2, fill="#54a0ff", width=2)
+            
+            self.log("success", "SHADOW", f"Árnyék iránya: {angle:.1f}°")
+            if lat:
+                self.log("success", "SHADOW", f"Becsült szélességi fok: ~{lat}°N")
+            
         except Exception as e:
             self.log("error", "SHADOW", f"Hiba: {str(e)}")
+
 
 # --- Indítás ---
 if __name__ == "__main__":
