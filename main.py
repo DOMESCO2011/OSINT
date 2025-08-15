@@ -4,6 +4,7 @@ from tkinter import filedialog
 from PIL import Image, ImageTk
 import threading
 import time
+from algorithms.exif import exif_reading
 
 class OSINTApp(ctk.CTk):
     def __init__(self):
@@ -12,6 +13,7 @@ class OSINTApp(ctk.CTk):
         self.geometry("1400x800")
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
+        OSINTApp.exif_reading = exif_reading
 
         # Változók
         self.image = None
@@ -132,11 +134,12 @@ class OSINTApp(ctk.CTk):
         try:
             # Modulok sorban
             modules = [
-                self.exif_reading,
+                lambda: self.exif_reading(self.image_path),
                 self.face_detection,
                 self.plate_recognition,
                 self.shadow_analysis
-            ]
+]
+
 
             for module in modules:
                 if not self.is_running:
@@ -149,8 +152,9 @@ class OSINTApp(ctk.CTk):
             self.is_running = False
 
     # --- Algoritmus Modulok ---
-    from algorithms.exif import exif_reading
-    exif_reading(file_path)
+
+
+
 
 
 
