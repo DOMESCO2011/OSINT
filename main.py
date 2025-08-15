@@ -96,6 +96,7 @@ class OSINTApp(ctk.CTk):
     def load_image(self):
         """Kép betöltése"""
         try:
+            global file_path
             file_path = filedialog.askopenfilename(filetypes=[("Images", "*.jpg *.png *.jpeg")])
             if file_path:
                 self.image_path = file_path
@@ -149,6 +150,9 @@ class OSINTApp(ctk.CTk):
 
     # --- Algoritmus Modulok ---
     from algorithms.exif import exif_reading
+    exif_reading(file_path)
+
+
 
     def face_detection(self):
         """Arcfelismerés"""
