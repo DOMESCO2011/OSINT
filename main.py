@@ -5,6 +5,7 @@ from PIL import Image, ImageTk
 import threading
 import time
 from algorithms.exif import exif_reading
+from algorithms.haar import haar_detection
 
 class OSINTApp(ctk.CTk):
     def __init__(self):
@@ -130,16 +131,14 @@ class OSINTApp(ctk.CTk):
         self.log("warning", "OSINT", "Analízis leállítva!")
 
     def run_osint(self):
-        """Algoritmusok futtatása"""
+        """Algoritmusok futtatása modulárisan"""
         try:
-            # Modulok sorban
             modules = [
                 lambda: self.exif_reading(self.image_path),
-                self.face_detection,
+                self.run_haar_detection,  # Új metódus a Haar detekcióhoz
                 self.plate_recognition,
                 self.shadow_analysis
-]
-
+            ]
 
             for module in modules:
                 if not self.is_running:
@@ -151,6 +150,30 @@ class OSINTApp(ctk.CTk):
         finally:
             self.is_running = False
 
+    def run_haar_detection(self):
+        """Haar detekció kiszervezve, de az osztályon belül"""
+        try:
+            
+            
+            self.log("info", "HAAR", "Arcok és szemek keresése...")
+            haar_results = haar_detection(self.image_path)
+            
+            if not haar_results:
+                self.log("warning", "HAAR", "Nem található arc.")
+                return
+
+            # Arcok és szemek kirajzolása
+            for (x, y, w, h) in haar_results["faces"]:
+                self.canvas.create_rectangle(x, y, x+w, y+h, outline="red", width=2)
+                self.log("success", "HAAR", f"Arc észlelve: ({x}, {y}, {w}, {h})")
+
+            for (x, y, w, h) in haar_results["eyes"]:
+                self.canvas.create_rectangle(x, y, x+w, y+h, outline="green", width=2)
+                self.log("success", "HAAR", f"Szem észlelve: ({x}, {y}, {w}, {h})")
+
+        except Exception as e:
+            self.log("error", "HAAR", f"Hiba: {str(e)}")
+
     # --- Algoritmus Modulok ---
 
 
@@ -158,19 +181,6 @@ class OSINTApp(ctk.CTk):
 
 
 
-    def face_detection(self):
-        """Arcfelismerés"""
-        try:
-            self.log("info", "FACE", "Arcok keresése...")
-            time.sleep(1.5)
-            
-            # Példa eredmények (x1, y1, x2, y2)
-            fake_faces = [(100, 100, 200, 200), (400, 150, 500, 250)]
-            for (x1, y1, x2, y2) in fake_faces:
-                self.canvas.create_rectangle(x1, y1, x2, y2, outline="#1dd1a1", width=2)
-                self.log("success", "FACE", f"Arc észlelve: ({x1}, {y1})")
-        except Exception as e:
-            self.log("error", "FACE", f"Hiba: {str(e)}")
 
     def plate_recognition(self):
         """Rendszámfelismerés"""

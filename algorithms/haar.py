@@ -1,26 +1,32 @@
-import numpy as np
 import cv2
+import numpy as np
 
-# Beépített Haarcascade fájlok betöltése
-f_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-e_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_eye.xml")
+def haar_detection(image_path):
+    """Haar Cascade arc- és szemfelismerés (visszaadja a koordinátákat)"""
+    try:
+        # Kép betöltése
+        image_cv = cv2.imdecode(np.fromfile(image_path, dtype=np.uint8), cv2.IMREAD_COLOR)
+        gray = cv2.cvtColor(image_cv, cv2.COLOR_BGR2GRAY)
 
-# Kép betöltése (ékezetkompatibilis mód)
-path = r"C:\Users\USER\Desktop\OSINT\algorithms\actor.jpg"
-image = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_COLOR)
+        # Cascade modellek betöltése
+        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_eye.xml")
 
-gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        # Arcok és szemek detektálása
+        faces = face_cascade.detectMultiScale(gray, 1.3, 5)
+        results = {"faces": [], "eyes": []}
 
-faces = f_cascade.detectMultiScale(gray, 1.3, 5)
-for (x, y, w, h) in faces:
-    cv2.rectangle(image, (x, y), (x + w, y + h), (255, 0, 0), 2)
-    roi_gray = gray[y:y + h, x:x + w]
-    roi_color = image[y:y + h, x:x + w]
+        for (x, y, w, h) in faces:
+            results["faces"].append((x, y, w, h))
+            
+            # Szemek keresése az arc területén belül
+            roi_gray = gray[y:y+h, x:x+w]
+            eyes = eye_cascade.detectMultiScale(roi_gray)
+            for (ex, ey, ew, eh) in eyes:
+                results["eyes"].append((x+ex, y+ey, ew, eh))
 
-    eyes = e_cascade.detectMultiScale(roi_gray)
-    for (ex, ey, ew, eh) in eyes:
-        cv2.rectangle(roi_color, (ex, ey), (ex + ew, ey + eh), (0, 255, 0), 2)
+        return results
 
-cv2.imshow('img', image)
-cv2.waitKey(0)
-cv2.destroyAllWindows()
+    except Exception as e:
+        print(f"[HAAR] Hiba: {e}")
+        return None
