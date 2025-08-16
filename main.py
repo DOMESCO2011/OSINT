@@ -8,6 +8,7 @@ from algorithms.exif import exif_reading
 from algorithms.haar import haar_detection
 from algorithms.shadow import compute_latitude
 
+
 class OSINTApp(ctk.CTk):
     def __init__(self):
         super().__init__()
