@@ -1,81 +1,112 @@
-# -*- coding: utf-8 -*-
-# algorithms/shadow.py
+#!/usr/bin/env python3
+"""
+SHADOW.PY - Pontos szélességi fok számítás előfeldolgozott adatokból
+Használat: python shadow.py [input_fájl.json]
+"""
 
+import json
 import math
-from typing import Optional, Dict, Any
-from .preshadow import prepare_shadow_data
+from datetime import datetime
 
-# Ha nincs kalibráció, valami default px/m skála kell a magasság–árnyék arányhoz.
-DEFAULT_PX_PER_METER = 100.0
-DEFAULT_OBJECT_HEIGHT_M = 1.70  # "átlagos ember" fallback
+class ShadowCalculator:
+    def __init__(self, data):
+        self.data = data
+        self.validate_input()
+        self.prepare_calculation()
+        
+    def validate_input(self):
+        """Bemeneti adatok validálása"""
+        required = ['height', 'shadow', 'date', 'time']
+        if not all(k in self.data for k in required):
+            raise ValueError("Hiányzó adatok")
+        
+    def prepare_calculation(self):
+        """Számítás előkészítése"""
+        # Dátum/idő átalakítás
+        dt = datetime.strptime(f"{self.data['date']} {self.data['time']}", "%Y-%m-%d %H:%M")
+        self.day_of_year = dt.timetuple().tm_yday
+        self.local_hour = dt.hour + dt.minute/60
+        
+        # Alapadatok
+        self.shadow_ratio = self.data['shadow'] / self.data['height']
+        
+    def calculate_declination(self):
+        """Nap deklinációjának számítása"""
+        return 23.45 * math.sin(math.radians(360/365 * (self.day_of_year - 81)))
+        
+    def calculate_solar_elevation(self):
+        """Nap magassági szögének számítása"""
+        return math.degrees(math.atan(1 / self.shadow_ratio))
+        
+    def calculate_latitude(self):
+        """Pontos szélességi fok számítás"""
+        declination = self.calculate_declination()
+        elevation = self.calculate_solar_elevation()
+        
+        # Korrekciók
+        time_correction = (self.local_hour - 12) * 0.5  # Délidőhöz viszonyított korrekció
+        return 90 - elevation + declination + time_correction
+        
+    def calculate_all(self):
+        """Teljes számítási folyamat"""
+        results = {
+            'input_data': self.data,
+            'declination': self.calculate_declination(),
+            'solar_elevation': self.calculate_solar_elevation(),
+            'latitude': self.calculate_latitude(),
+            'calculation_time': datetime.now().isoformat(),
+            'accuracy_estimate': self.estimate_accuracy()
+        }
+        return results
+        
+    def estimate_accuracy(self):
+        """Pontosság becslése"""
+        accuracy = 0.5  # Alappontosság fokokban
+        
+        # Pontosság javítása ha pontos idő ismert
+        if 'time' in self.data and self.data['time'] != '':
+            accuracy *= 0.7
+            
+        # Pontosság romlása ha nincs pontos dátum
+        if 'date' not in self.data:
+            accuracy *= 1.5
+            
+        return round(accuracy, 2)
 
+def load_data(filename='shadow_data.json'):
+    """Adatok betöltése JSON fájlból"""
+    with open(filename) as f:
+        return json.load(f)
 
-def _estimate_latitude_from_shadow(
-    shadow_len_px: float,
-    delta_rad: float,
-    *,
-    object_height_m: float = DEFAULT_OBJECT_HEIGHT_M,
-    px_per_meter: float = DEFAULT_PX_PER_METER
-) -> Optional[float]:
-    """
-    Egyszerű trig: alpha = arctan(H / L), phi = 90° - alpha + delta.
-    Itt L pix → méter skálázás szükséges (px_per_meter).
-    Ha bármelyik kritikus adat hiányzik / invalid, None-t adunk.
-    """
-    if shadow_len_px is None or delta_rad is None:
-        return None
-    if px_per_meter is None or px_per_meter <= 0:
-        return None
-    if object_height_m is None or object_height_m <= 0:
-        return None
+def print_results(results):
+    """Eredmények megjelenítése"""
+    print("\nSHADOW - Számítási eredmények")
+    print("=" * 40)
+    print(f"Objektum magassága: {results['input_data']['height']} m")
+    print(f"Árnyék hossza: {results['input_data']['shadow']} m")
+    print(f"Mérés ideje: {results['input_data']['date']} {results['input_data']['time']}")
+    print("\nKalkulált értékek:")
+    print(f"- Nap deklinációja: {results['declination']:.2f}°")
+    print(f"- Nap magassági szöge: {results['solar_elevation']:.2f}°")
+    print(f"- Szélességi fok: {results['latitude']:.2f}°")
+    print(f"- Becsült pontosság: ±{results['accuracy_estimate']}°")
 
-    L_m = shadow_len_px / px_per_meter
-    if L_m <= 0:
-        return None
-
-    alpha = math.atan(object_height_m / L_m)           # nap magasságszög
-    phi_rad = (math.pi / 2.0) - alpha + float(delta_rad)
-    return math.degrees(phi_rad)
-
-
-def compute_latitude(image_path: Optional[str] = None,
-                     *,
-                     object_height_m: float = DEFAULT_OBJECT_HEIGHT_M,
-                     px_per_meter: float = DEFAULT_PX_PER_METER,
-                     delta_rad: Optional[float] = None) -> Dict[str, Any]:
-    """
-    GUI-barát wrapper:
-      - Ha image_path-et kap, mindent automatikusan előkészít és visszaad egy dict-et:
-          {
-            "shadow_direction": float | None,  # fok
-            "estimated_latitude": float | None,
-            "detected_lines": np.ndarray | None  # (N,1,4)
-          }
-      - Ha nincs kép, csak paraméteres módban használható (nem része a te GUI-nak).
-    """
-    if image_path is None:
-        # Paraméteres mód – itt nem kell a te GUI-dnak
-        return {"shadow_direction": None, "estimated_latitude": None, "detected_lines": None}
-
-    prep = prepare_shadow_data(image_path)
-
-    # Árnyék iránya (deg) – a GUI-d ezt kiírja és vonalakat rajzol
-    angle_deg = prep.get("shadow_angle_deg")
-    lines = prep.get("detected_lines")
-
-    # Szélességi fok becslés – csak ha van deklináció és árnyékhossz
-    delta = delta_rad if delta_rad is not None else prep.get("delta_rad")
-    lat = _estimate_latitude_from_shadow(
-        prep.get("shadow_length_px"),
-        delta,
-        object_height_m=object_height_m,
-        px_per_meter=px_per_meter
-    )
-
-    # A GUI-d "if not shadow_results or shadow_results['shadow_direction'] is None"
-    # tesztet használ. Ehhez biztosan adjunk vissza dict-et és a kulcsokat.
-    return {
-        "shadow_direction": angle_deg,
-        "estimated_latitude": None if lat is None else round(float(lat), 2),
-        "detected_lines": lines
-    }
+if __name__ == '__main__':
+    import sys
+    
+    try:
+        input_file = sys.argv[1] if len(sys.argv) > 1 else 'shadow_data.json'
+        data = load_data(input_file)
+        
+        calculator = ShadowCalculator(data)
+        results = calculator.calculate_all()
+        
+        print_results(results)
+        
+        # Eredmény mentése
+        with open('shadow_results.json', 'w') as f:
+            json.dump(results, f, indent=2)
+            
+    except Exception as e:
+        print(f"Hiba: {str(e)}")
+        print("Használat: python shadow.py [input_fájl.json]")
