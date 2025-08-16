@@ -2,133 +2,171 @@
 # algorithms/preshadow.py
 
 import math
-from dataclasses import dataclass
-from typing import Tuple, Dict, Any, Optional
-from datetime import datetime
+import os
+from datetime import datetime, timezone
+from typing import Dict, Any, Optional, Tuple, List
 
+import cv2
 import numpy as np
+from PIL import Image, ExifTags
 
 
-# ---------- HELPER: intrinsics / rotations ----------
+# ---------------- EXIF / dátum / deklináció ----------------
 
-def get_intrinsic_matrix(fov_deg: float, width: int, height: int) -> np.ndarray:
+def _read_exif(image_path: str) -> Dict[str, Any]:
+    try:
+        img = Image.open(image_path)
+        raw = img._getexif() or {}
+        exif = {ExifTags.TAGS.get(k, k): v for k, v in raw.items()}
+        return exif
+    except Exception:
+        return {}
+
+
+def extract_datetime_utc(image_path: str) -> Optional[datetime]:
     """
-    Egyszerű pinhole intrinsics. A fov_deg itt VÍZSZINTES FOV-ként értelmezzük.
+    EXIF DateTimeOriginal -> UTC-nek tekintjük, ha nincs zóna.
+    Ha nincs EXIF, fájl módosítási idejével próbálkozunk.
     """
-    fov_rad = math.radians(fov_deg)
-    fx = width / (2.0 * math.tan(fov_rad / 2.0))
-    fy = fx  # feltételezzük square pixel-t
-    cx = width / 2.0
-    cy = height / 2.0
-    return np.array([[fx, 0.0, cx],
-                     [0.0, fy, cy],
-                     [0.0, 0.0, 1.0]], dtype=np.float64)
+    exif = _read_exif(image_path)
+    dt_str = exif.get("DateTimeOriginal") or exif.get("DateTime")
+    if dt_str:
+        # Formátum tipikusan: 'YYYY:MM:DD HH:MM:SS'
+        try:
+            naive = datetime.strptime(dt_str, "%Y:%m:%d %H:%M:%S")
+            return naive.replace(tzinfo=timezone.utc)
+        except Exception:
+            pass
+
+    try:
+        ts = os.path.getmtime(image_path)
+        return datetime.fromtimestamp(ts, tz=timezone.utc)
+    except Exception:
+        return None
 
 
-def rotation_matrix(pitch_deg: float, yaw_deg: float, roll_deg: float) -> np.ndarray:
+def solar_declination_rad(dt_utc: datetime) -> Optional[float]:
     """
-    R = Rz(roll) * Ry(yaw) * Rx(pitch) konvenció; fok → radián.
+    Nap deklinációja radiánban (Spencer-féle közelítés).
     """
-    px = math.radians(pitch_deg)
-    yw = math.radians(yaw_deg)
-    rl = math.radians(roll_deg)
-
-    Rx = np.array([[1, 0, 0],
-                   [0, math.cos(px), -math.sin(px)],
-                   [0, math.sin(px),  math.cos(px)]], dtype=np.float64)
-    Ry = np.array([[ math.cos(yw), 0, math.sin(yw)],
-                   [0, 1, 0],
-                   [-math.sin(yw), 0, math.cos(yw)]], dtype=np.float64)
-    Rz = np.array([[math.cos(rl), -math.sin(rl), 0],
-                   [math.sin(rl),  math.cos(rl), 0],
-                   [0, 0, 1]], dtype=np.float64)
-    return Rz @ Ry @ Rx
-
-
-# ---------- HELPER: sun declination ----------
-
-def solar_declination_rad(t_utc: datetime) -> float:
-    """
-    Nap deklináció radiánban (Spencer-szerű közelítés).
-    t_utc: timezone-aware UTC datetime, de elfogadunk naive datetime-et is (úgy kezeljük, mint UTC).
-    """
-    if t_utc.tzinfo is not None:
-        n = int(t_utc.timetuple().tm_yday)
-    else:
-        n = int(t_utc.timetuple().tm_yday)
+    if dt_utc is None:
+        return None
+    n = dt_utc.timetuple().tm_yday
     B = 2.0 * math.pi * (n - 1) / 365.0
-    delta = (0.006918
-             - 0.399912 * math.cos(B)
-             + 0.070257 * math.sin(B)
-             - 0.006758 * math.cos(2 * B)
-             + 0.000907 * math.sin(2 * B)
-             - 0.002697 * math.cos(3 * B)
-             + 0.00148  * math.sin(3 * B))
-    return float(delta)
+    δ = (0.006918
+         - 0.399912 * math.cos(B)
+         + 0.070257 * math.sin(B)
+         - 0.006758 * math.cos(2 * B)
+         + 0.000907 * math.sin(2 * B)
+         - 0.002697 * math.cos(3 * B)
+         + 0.00148  * math.sin(3 * B))
+    return float(δ)
 
 
-# ---------- PRESHADOW PIPE ----------
+# ---------------- Árnyék detektálás ----------------
 
-@dataclass
-class CameraSetup:
-    width: int
-    height: int
-    fov_deg: float
-    pitch_deg: float = 0.0
-    yaw_deg: float = 0.0
-    roll_deg: float = 0.0
-
-
-def shadow_vector_world_from_pixels(
-    base_px: Tuple[float, float],
-    tip_px: Tuple[float, float],
-    K: np.ndarray,
-    R: np.ndarray
-) -> Tuple[np.ndarray, float, float]:
+def detect_shadow_lines(image_path: str) -> Tuple[Optional[np.ndarray], Optional[Tuple[int,int,int,int]]]:
     """
-    Pixelből világkoordinátás irány (egységvektor), + pixelhossz és kép-sík azimut.
-    Megjegyzés: a hosszt MÉTERRE külön skálázni kell (px_per_meter-rel).
+    Canny + Probabilistic Hough. Visszaadja:
+      - lines: alak (N,1,4), int, hogy a GUI-d közvetlen kirajzolhassa,
+      - longest: (x1,y1,x2,y2) a leghosszabb vonal vagy None.
     """
-    u0, v0 = base_px
-    u1, v1 = tip_px
-    v_img = np.array([u1 - u0, v1 - v0, 0.0], dtype=np.float64)
-    length_px = float(np.hypot(v_img[0], v_img[1]))
-    if length_px == 0.0:
-        raise ValueError("[PRESHADOW] üres (0 hosszú) árnyékvektor")
+    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        return None, None
 
-    # homogén irány (képsíkban) → kamera tér
-    p0_cam = np.linalg.inv(K) @ np.array([u0, v0, 1.0], dtype=np.float64)
-    p1_cam = np.linalg.inv(K) @ np.array([u1, v1, 1.0], dtype=np.float64)
-    v_cam = p1_cam - p0_cam  # irány a kamera térben
-    v_world = np.linalg.inv(R) @ v_cam
-    # normalizálás iránynak
-    norm = float(np.linalg.norm(v_world))
-    if norm == 0.0:
-        raise ValueError("[PRESHADOW] degenerált világvektor")
-    v_world_unit = v_world / norm
+    # enyhe zajszűrés + élek
+    blur = cv2.GaussianBlur(img, (5, 5), 0)
+    edges = cv2.Canny(blur, 50, 150)
 
-    # képsík azimut (diagnosztika)
-    az_img = math.atan2(v_img[1], v_img[0])
+    # probabilistic Hough
+    raw = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=80, minLineLength=40, maxLineGap=12)
+    if raw is None or len(raw) == 0:
+        return None, None
 
-    return v_world_unit, length_px, az_img
+    # leghosszabb vonal kiválasztása
+    longest = None
+    best_len = -1.0
+    for r in raw:
+        x1, y1, x2, y2 = r[0]
+        L = float(np.hypot(x2 - x1, y2 - y1))
+        if L > best_len:
+            best_len = L
+            longest = (int(x1), int(y1), int(x2), int(y2))
+
+    # lines-t olyan formában adjuk vissza, ahogy a GUI elvárja: (N,1,4)
+    lines = np.array(raw, dtype=np.int32)
+    return lines, longest
 
 
-def prepare_shadow_data(
-    base_px: Tuple[float, float],
-    tip_px: Tuple[float, float],
-    cam: CameraSetup
-) -> Dict[str, Any]:
+def line_angle_deg(x1: int, y1: int, x2: int, y2: int) -> float:
     """
-    Előkészítés: K, R, világvektor, px-hossz, azimut.
+    Vonal irányszöge fokban, képsíkban (x jobbra, y lefelé).
     """
-    K = get_intrinsic_matrix(cam.fov_deg, cam.width, cam.height)
-    R = rotation_matrix(cam.pitch_deg, cam.yaw_deg, cam.roll_deg)
-    v_world, length_px, az_img = shadow_vector_world_from_pixels(base_px, tip_px, K, R)
+    angle_rad = math.atan2((y2 - y1), (x2 - x1))
+    angle_deg = math.degrees(angle_rad)
+    # 0° = vízszintes jobbra; állítsuk 0..360 tartományba
+    if angle_deg < 0:
+        angle_deg += 360.0
+    return angle_deg
+
+
+# ---------------- FOV becslés (opcionális) ----------------
+
+def estimate_fov_deg(image_path: str) -> float:
+    """
+    Ha van EXIF FocalLength, kiszámoljuk a vízszintes FOV-ot.
+    Ha nincs, default: 60°.
+    """
+    exif = _read_exif(image_path)
+    focal = None
+    try:
+        fl = exif.get("FocalLength")
+        if isinstance(fl, tuple) and len(fl) == 2 and fl[1] != 0:
+            focal = fl[0] / fl[1]
+        elif fl is not None:
+            focal = float(fl)
+    except Exception:
+        focal = None
+
+    # egyszerű default szenzorszélesség (mm) – mobilszenzor becslés
+    if focal:
+        sensor_w_mm = 6.4
+        fov_rad = 2.0 * math.atan((sensor_w_mm * 0.5) / focal)
+        return math.degrees(fov_rad)
+    return 60.0
+
+
+# ---------------- mindent összefogó előkészítő ----------------
+
+def prepare_shadow_data(image_path: str) -> Dict[str, Any]:
+    """
+    Minden automatikus előkészítés:
+      - Hough vonalak + leghosszabb
+      - árnyék iránya (deg)
+      - árnyékhossz (pix)
+      - EXIF dátum -> nap deklináció
+      - FOV (ha kell)
+    """
+    lines, longest = detect_shadow_lines(image_path)
+
+    angle_deg = None
+    length_px = None
+    if longest is not None:
+        x1, y1, x2, y2 = longest
+        angle_deg = line_angle_deg(x1, y1, x2, y2)
+        length_px = float(np.hypot(x2 - x1, y2 - y1))
+
+    dt_utc = extract_datetime_utc(image_path)
+    delta = solar_declination_rad(dt_utc) if dt_utc is not None else None
+    fov_deg = estimate_fov_deg(image_path)
+
     return {
-        "K": K,
-        "R": R,
-        "shadow_world_unit": v_world,
-        "shadow_len_px": length_px,
-        "azimuth_img_rad": az_img,
-        "cam": cam,
+        "detected_lines": lines,          # (N,1,4) vagy None
+        "longest_line": longest,          # (x1,y1,x2,y2) vagy None
+        "shadow_angle_deg": angle_deg,    # vagy None
+        "shadow_length_px": length_px,    # vagy None
+        "datetime_utc": dt_utc,           # vagy None
+        "delta_rad": delta,               # vagy None
+        "fov_deg": fov_deg
     }
