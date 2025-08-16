@@ -1,15 +1,15 @@
 {
   "input_data": {
-    "height": 3.0,
-    "shadow": 55.0,
+    "height": 8.0,
+    "shadow": 5.0,
     "date": "2025-08-16",
-    "time": "11:49",
-    "calc_date": "2025-08-16T11:49:48.068328",
+    "time": "12:35",
+    "calc_date": "2025-08-16T12:35:38.921173",
     "version": "1.0"
   },
   "declination": 13.454959682356419,
-  "solar_elevation": 3.122130462115708,
-  "latitude": 100.24116255357404,
-  "calculation_time": "2025-08-16T11:50:04.831116",
+  "solar_elevation": 57.9946167919165,
+  "latitude": 45.75200955710658,
+  "calculation_time": "2025-08-16T12:35:48.145833",
   "accuracy_estimate": 0.35
 }
