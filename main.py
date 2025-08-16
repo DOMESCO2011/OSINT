@@ -6,7 +6,7 @@ import threading
 import time
 from algorithms.exif import exif_reading
 from algorithms.haar import haar_detection
-from algorithms.shadow import analyze_shadow
+from algorithms.shadow import compute_latitude
 
 class OSINTApp(ctk.CTk):
     def __init__(self):
@@ -205,7 +205,7 @@ class OSINTApp(ctk.CTk):
             self.log("info", "SHADOW", "Árnyékok elemzése...")
             
             # Call the module function directly
-            shadow_results = analyze_shadow(self.image_path)
+            shadow_results = compute_latitude(self.image_path)
             
             if not shadow_results or shadow_results["shadow_direction"] is None:
                 self.log("warning", "SHADOW", "Nem sikerült elemezni az árnyékokat.")

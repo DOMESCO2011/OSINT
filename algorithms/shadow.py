@@ -1,52 +1,45 @@
-import cv2
 import numpy as np
-import math
 
-def analyze_shadow(image_path):
-    """Árnyék alapú helymeghatározás és elemzés"""
-    try:
-        # Kép betöltése
-        img = cv2.imdecode(np.fromfile(image_path, dtype=np.uint8), cv2.IMREAD_COLOR)
-        
-        # Árnyék detektálás
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        edges = cv2.Canny(blurred, 50, 150)
-        
-        # Vonalak detektálása (Hough transzformáció)
-        lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=100, 
-                              minLineLength=100, maxLineGap=10)
-        
-        if lines is None:
-            return {"shadow_direction": None, "estimated_latitude": None}
-        
-        # Árnyék irányának meghatározása (átlagos vonal irány)
-        angles = []
-        for line in lines:
-            x1, y1, x2, y2 = line[0]
-            angle = math.degrees(math.atan2(y2 - y1, x2 - x1))
-            angles.append(angle)
-        
-        if not angles:
-            return {"shadow_direction": None, "estimated_latitude": None}
-        
-        avg_angle = np.mean(angles)
-        
-        # Becsült szélességi fok (nagyon egyszerűsített modell)
-        estimated_lat = None
-        if -45 <= avg_angle <= 45:   # Dél környéke
-            estimated_lat = 47.0  # Példaérték (Budapest)
-        elif 45 < avg_angle < 135:    # Kelet
-            estimated_lat = 40.0      # Példaérték
-        else:                        # Nyugat/Észak
-            estimated_lat = 50.0      # Példaérték
-            
-        return {
-            "shadow_direction": avg_angle,
-            "estimated_latitude": estimated_lat,
-            "detected_lines": lines
-        }
-        
-    except Exception as e:
-        print(f"[SHADOW] Hiba: {e}")
-        return None
+def compute_latitude(shadow_vector, h, delta):
+    """
+    Nagy egyenlet a szélességi fok kiszámításához.
+    shadow_vector: világkoordinátás árnyékvektor (x,y,z)
+    h: tárgy magassága
+    delta: nap deklináció (radianban!)
+    """
+
+    # 1. Árnyék hossza
+    L = np.linalg.norm(shadow_vector[:2])  # csak x-y síkon
+
+    # 2. Nap magassági szög
+    alpha = np.arctan2(h, L)
+
+    # 3. Azimut (árnyék iránya)
+    A = np.arctan2(shadow_vector[1], shadow_vector[0])
+
+    # 4. Szélességi fok számítása
+    phi = np.arcsin(
+        (np.sin(alpha) - np.sin(delta) * np.sin(A)) /
+        (np.cos(delta) * np.cos(A))
+    )
+
+    return np.rad2deg(phi)
+
+
+if __name__ == "__main__":
+    # Példa használat
+    from preshadow import prepare_shadow_data
+
+    # Dummy input
+    base_px = (100, 200)
+    tip_px  = (120, 240)
+    fov     = 60
+    width   = 800
+    height  = 600
+    pitch, yaw, roll = 5, 2, 0
+    h = 2.0  # méter
+    delta = np.deg2rad(23.44)  # pl. nyári napforduló
+
+    data = prepare_shadow_data(base_px, tip_px, fov, width, height, pitch, yaw, roll)
+    lat = compute_latitude(data["shadow_vector"], h, delta)
+    print("Becsült szélességi fok:", lat)
