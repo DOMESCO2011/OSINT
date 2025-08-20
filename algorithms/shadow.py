@@ -1,5 +1,4 @@
 import math
-import json
 from typing import List, Dict, Optional
 
 # ============ CSILLAGÁSZATI ALAP FÜGGVÉNYEK ============
@@ -51,6 +50,8 @@ def latitude_from_single(h_rad: float, delta_rad: float, H_rad: float) -> float:
             math.cos(phi) * math.sin(delta_rad)
             - math.sin(phi) * math.cos(delta_rad) * math.cos(H_rad)
         )
+        if abs(df) < 1e-12:
+            break
         step = f / df
         phi -= step
         if abs(step) < 1e-10:
@@ -105,10 +106,10 @@ class ShadowCalculator:
         phi = latitude_from_single(math.radians(h_corr), delta, H)
 
         return {
-            'latitude_deg': math.degrees(phi),
-            'elevation_deg': h_corr,
-            'declination_deg': math.degrees(delta),
-            'hour_angle_deg': math.degrees(H)
+            'latitude_deg': float(math.degrees(phi)),
+            'elevation_deg': float(h_corr),
+            'declination_deg': float(math.degrees(delta)),
+            'hour_angle_deg': float(math.degrees(H))
         }
 
     def process_multiple(self, measurements: List[Dict]) -> Dict:
@@ -127,51 +128,6 @@ class ShadowCalculator:
 
         phi, dlon = fit_lat_lonoffset(samples, self.utc_offset)
         return {
-            'latitude_deg': math.degrees(phi),
-            'longitude_offset_deg': dlon
+            'latitude_deg': float(math.degrees(phi)),
+            'longitude_offset_deg': float(dlon)
         }
-
-# ============ INTERAKTÍV BEMENET ============
-
-if __name__ == "__main__":
-    print("Adja meg az alapadatokat (Enter-rel továbblépés):")
-    utc_offset = int(input("UTC offset (pl. 1): ") or "1")
-    longitude_input = input("Longitude (ha ismert, fok, üres ha nem): ")
-    longitude = float(longitude_input) if longitude_input.strip() != "" else None
-
-    measurements = []
-    n = int(input("Hány mérést szeretne rögzíteni?: "))
-    for i in range(n):
-        print(f"--- {i+1}. mérés ---")
-        height = float(input("Rúd magassága (m): "))
-        shadow = float(input("Árnyék hossza (m): "))
-        day_of_year = int(input("Év napja (1-365): "))
-        local_hour = float(input("Helyi idő (óra, pl. 14.5): "))
-        pitch = float(input("Pitch (fok): ") or "0")
-        roll = float(input("Roll (fok): ") or "0")
-        ground_pitch = float(input("Talaj pitch (fok): ") or "0")
-        ground_roll = float(input("Talaj roll (fok): ") or "0")
-
-        measurements.append({
-            'height': height,
-            'shadow': shadow,
-            'day_of_year': day_of_year,
-            'local_hour': local_hour,
-            'pitch': pitch,
-            'roll': roll,
-            'ground_pitch': ground_pitch,
-            'ground_roll': ground_roll
-        })
-
-    calc = ShadowCalculator(utc_offset=utc_offset, longitude=longitude)
-
-    if len(measurements) > 1:
-        result = calc.process_multiple(measurements)
-    else:
-        result = calc.process_measurement(measurements[0])
-
-    print("\nEredmény JSON formátumban:")
-    print(json.dumps(result, indent=2))
-    with open("shadow_results.json", "w") as f:
-        json.dump(result, f, indent=2)
-    print("Eredmények elmentve: shadow_results.json")
