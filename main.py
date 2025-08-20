@@ -9,12 +9,6 @@ from algorithms.haar import haar_detection
 from algorithms.shadowcalc import detect_shadow
 
 
-
-
-
-
-
-
 class OSINTApp(ctk.CTk):
     def __init__(self):
         super().__init__()
