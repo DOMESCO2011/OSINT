@@ -1,15 +1,6 @@
 {
-  "input_data": {
-    "height": 8.0,
-    "shadow": 5.0,
-    "date": "2025-08-16",
-    "time": "12:35",
-    "calc_date": "2025-08-16T12:35:38.921173",
-    "version": "1.0"
-  },
-  "declination": 13.454959682356419,
-  "solar_elevation": 57.9946167919165,
-  "latitude": 45.75200955710658,
-  "calculation_time": "2025-08-16T12:35:48.145833",
-  "accuracy_estimate": 0.35
+  "latitude_deg": 13.788166549947846,
+  "elevation_deg": 36.89236324141438,
+  "declination_deg": -21.665374528206105,
+  "hour_angle_deg": 40.30616653591386
 }

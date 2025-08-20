@@ -1,112 +1,177 @@
-#!/usr/bin/env python3
-"""
-SHADOW.PY - Pontos szélességi fok számítás előfeldolgozott adatokból
-Használat: python shadow.py [input_fájl.json]
-"""
-
-import json
 import math
-from datetime import datetime
+import json
+from typing import List, Dict, Optional
+
+# ============ CSILLAGÁSZATI ALAP FÜGGVÉNYEK ============
+
+def solar_declination(day_of_year: int) -> float:
+    return math.radians(23.44) * math.sin(math.radians(360 / 365.0 * (day_of_year - 81)))
+
+def equation_of_time(day_of_year: int) -> float:
+    B = math.radians(360 / 365.0 * (day_of_year - 81))
+    return 9.87 * math.sin(2 * B) - 7.53 * math.cos(B) - 1.5 * math.sin(B)
+
+def hour_angle(local_time_hours: float, utc_offset: int, day_of_year: int, lon_deg: float, use_eot=True) -> float:
+    eot = equation_of_time(day_of_year) if use_eot else 0.0
+    lon_tz = 15.0 * utc_offset
+    lst = local_time_hours + (eot + 4 * (lon_deg - lon_tz)) / 60.0
+    return math.radians(15.0 * (lst - 12.0))
+
+# ============ IMU / KORREKCIÓ ============
+
+def effective_height(height: float, pitch_deg: float = 0.0, roll_deg: float = 0.0) -> float:
+    tilt = math.acos(
+        max(-1.0, min(1.0, math.cos(math.radians(pitch_deg)) * math.cos(math.radians(roll_deg))))
+    )
+    return height * math.cos(tilt)
+
+def effective_shadow(shadow: float, ground_pitch_deg: float = 0.0, ground_roll_deg: float = 0.0) -> float:
+    ground_tilt = math.acos(
+        max(-1.0, min(1.0, math.cos(math.radians(ground_pitch_deg)) * math.cos(math.radians(ground_roll_deg))))
+    )
+    return shadow * math.cos(ground_tilt)
+
+def elevation_from_shadow(height: float, shadow: float) -> float:
+    return math.atan2(height, shadow)
+
+def refraction_deg(elev_deg: float) -> float:
+    h = max(elev_deg, 0.01)
+    R = 1.02 / math.tan(math.radians(h + 10.3 / (h + 5.11))) / 60.0
+    return R
+
+# ============ SZÉLESSÉG SZÁMÍTÁS ============
+
+def latitude_from_single(h_rad: float, delta_rad: float, H_rad: float) -> float:
+    phi = 0.5
+    for _ in range(30):
+        f = math.sin(h_rad) - (
+            math.sin(phi) * math.sin(delta_rad) + math.cos(phi) * math.cos(delta_rad) * math.cos(H_rad)
+        )
+        df = -(
+            math.cos(phi) * math.sin(delta_rad)
+            - math.sin(phi) * math.cos(delta_rad) * math.cos(H_rad)
+        )
+        step = f / df
+        phi -= step
+        if abs(step) < 1e-10:
+            break
+    return phi
+
+def fit_lat_lonoffset(samples: List[Dict], utc_offset: int):
+    phi = math.radians(47.0)
+    dlon = 0.0
+    for _ in range(80):
+        Fphi = Flon = 0.0
+        Gpp = Gpl = Gll = 0.0
+        for s in samples:
+            delta = solar_declination(s['day_of_year'])
+            H = hour_angle(s['local_hour'], utc_offset, s['day_of_year'], lon_deg=15 * utc_offset + dlon)
+            model = math.sin(phi) * math.sin(delta) + math.cos(phi) * math.cos(delta) * math.cos(H)
+            r = math.sin(s['h_rad']) - model
+            dmodel_dphi = math.cos(phi) * math.sin(delta) - math.sin(phi) * math.cos(delta) * math.cos(H)
+            dmodel_dlon = math.cos(phi) * math.cos(delta) * math.sin(H) * math.radians(1.0)
+            Fphi += r * dmodel_dphi
+            Flon += r * dmodel_dlon
+            Gpp += dmodel_dphi ** 2
+            Gpl += dmodel_dphi * dmodel_dlon
+            Gll += dmodel_dlon ** 2
+        det = Gpp * Gll - Gpl * Gpl
+        if abs(det) < 1e-12:
+            break
+        dphi = (Fphi * Gll - Flon * Gpl) / det
+        dlon = dlon + (Flon * Gpp - Fphi * Gpl) / det
+        phi = phi + dphi
+        if abs(dphi) < 1e-10:
+            break
+    return phi, dlon
+
+# ============ FŐ OSZTÁLY ============
 
 class ShadowCalculator:
-    def __init__(self, data):
-        self.data = data
-        self.validate_input()
-        self.prepare_calculation()
-        
-    def validate_input(self):
-        """Bemeneti adatok validálása"""
-        required = ['height', 'shadow', 'date', 'time']
-        if not all(k in self.data for k in required):
-            raise ValueError("Hiányzó adatok")
-        
-    def prepare_calculation(self):
-        """Számítás előkészítése"""
-        # Dátum/idő átalakítás
-        dt = datetime.strptime(f"{self.data['date']} {self.data['time']}", "%Y-%m-%d %H:%M")
-        self.day_of_year = dt.timetuple().tm_yday
-        self.local_hour = dt.hour + dt.minute/60
-        
-        # Alapadatok
-        self.shadow_ratio = self.data['shadow'] / self.data['height']
-        
-    def calculate_declination(self):
-        """Nap deklinációjának számítása"""
-        return 23.45 * math.sin(math.radians(360/365 * (self.day_of_year - 81)))
-        
-    def calculate_solar_elevation(self):
-        """Nap magassági szögének számítása"""
-        return math.degrees(math.atan(1 / self.shadow_ratio))
-        
-    def calculate_latitude(self):
-        """Pontos szélességi fok számítás"""
-        declination = self.calculate_declination()
-        elevation = self.calculate_solar_elevation()
-        
-        # Korrekciók
-        time_correction = (self.local_hour - 12) * 0.5  # Délidőhöz viszonyított korrekció
-        return 90 - elevation + declination + time_correction
-        
-    def calculate_all(self):
-        """Teljes számítási folyamat"""
-        results = {
-            'input_data': self.data,
-            'declination': self.calculate_declination(),
-            'solar_elevation': self.calculate_solar_elevation(),
-            'latitude': self.calculate_latitude(),
-            'calculation_time': datetime.now().isoformat(),
-            'accuracy_estimate': self.estimate_accuracy()
+    def __init__(self, utc_offset: int = 1, longitude: Optional[float] = None):
+        self.utc_offset = utc_offset
+        self.longitude = longitude
+
+    def process_measurement(self, m: Dict) -> Dict:
+        H_eff = effective_height(m['height'], m.get('pitch', 0), m.get('roll', 0))
+        S_eff = effective_shadow(m['shadow'], m.get('ground_pitch', 0), m.get('ground_roll', 0))
+        h_rad = elevation_from_shadow(H_eff, S_eff)
+        h_deg = math.degrees(h_rad)
+        h_corr = h_deg + refraction_deg(h_deg)
+
+        delta = solar_declination(m['day_of_year'])
+        lon = self.longitude if self.longitude is not None else 15 * self.utc_offset
+        H = hour_angle(m['local_hour'], self.utc_offset, m['day_of_year'], lon)
+        phi = latitude_from_single(math.radians(h_corr), delta, H)
+
+        return {
+            'latitude_deg': math.degrees(phi),
+            'elevation_deg': h_corr,
+            'declination_deg': math.degrees(delta),
+            'hour_angle_deg': math.degrees(H)
         }
-        return results
-        
-    def estimate_accuracy(self):
-        """Pontosság becslése"""
-        accuracy = 0.5  # Alappontosság fokokban
-        
-        # Pontosság javítása ha pontos idő ismert
-        if 'time' in self.data and self.data['time'] != '':
-            accuracy *= 0.7
-            
-        # Pontosság romlása ha nincs pontos dátum
-        if 'date' not in self.data:
-            accuracy *= 1.5
-            
-        return round(accuracy, 2)
 
-def load_data(filename='shadow_data.json'):
-    """Adatok betöltése JSON fájlból"""
-    with open(filename) as f:
-        return json.load(f)
+    def process_multiple(self, measurements: List[Dict]) -> Dict:
+        samples = []
+        for m in measurements:
+            H_eff = effective_height(m['height'], m.get('pitch', 0), m.get('roll', 0))
+            S_eff = effective_shadow(m['shadow'], m.get('ground_pitch', 0), m.get('ground_roll', 0))
+            h_rad = elevation_from_shadow(H_eff, S_eff)
+            h_deg = math.degrees(h_rad)
+            h_corr = h_deg + refraction_deg(h_deg)
+            samples.append({
+                'h_rad': math.radians(h_corr),
+                'local_hour': m['local_hour'],
+                'day_of_year': m['day_of_year']
+            })
 
-def print_results(results):
-    """Eredmények megjelenítése"""
-    print("\nSHADOW - Számítási eredmények")
-    print("=" * 40)
-    print(f"Objektum magassága: {results['input_data']['height']} m")
-    print(f"Árnyék hossza: {results['input_data']['shadow']} m")
-    print(f"Mérés ideje: {results['input_data']['date']} {results['input_data']['time']}")
-    print("\nKalkulált értékek:")
-    print(f"- Nap deklinációja: {results['declination']:.2f}°")
-    print(f"- Nap magassági szöge: {results['solar_elevation']:.2f}°")
-    print(f"- Szélességi fok: {results['latitude']:.2f}°")
-    print(f"- Becsült pontosság: ±{results['accuracy_estimate']}°")
+        phi, dlon = fit_lat_lonoffset(samples, self.utc_offset)
+        return {
+            'latitude_deg': math.degrees(phi),
+            'longitude_offset_deg': dlon
+        }
 
-if __name__ == '__main__':
-    import sys
-    
-    try:
-        input_file = sys.argv[1] if len(sys.argv) > 1 else 'shadow_data.json'
-        data = load_data(input_file)
-        
-        calculator = ShadowCalculator(data)
-        results = calculator.calculate_all()
-        
-        print_results(results)
-        
-        # Eredmény mentése
-        with open('shadow_results.json', 'w') as f:
-            json.dump(results, f, indent=2)
-            
-    except Exception as e:
-        print(f"Hiba: {str(e)}")
-        print("Használat: python shadow.py [input_fájl.json]")
+# ============ INTERAKTÍV BEMENET ============
+
+if __name__ == "__main__":
+    print("Adja meg az alapadatokat (Enter-rel továbblépés):")
+    utc_offset = int(input("UTC offset (pl. 1): ") or "1")
+    longitude_input = input("Longitude (ha ismert, fok, üres ha nem): ")
+    longitude = float(longitude_input) if longitude_input.strip() != "" else None
+
+    measurements = []
+    n = int(input("Hány mérést szeretne rögzíteni?: "))
+    for i in range(n):
+        print(f"--- {i+1}. mérés ---")
+        height = float(input("Rúd magassága (m): "))
+        shadow = float(input("Árnyék hossza (m): "))
+        day_of_year = int(input("Év napja (1-365): "))
+        local_hour = float(input("Helyi idő (óra, pl. 14.5): "))
+        pitch = float(input("Pitch (fok): ") or "0")
+        roll = float(input("Roll (fok): ") or "0")
+        ground_pitch = float(input("Talaj pitch (fok): ") or "0")
+        ground_roll = float(input("Talaj roll (fok): ") or "0")
+
+        measurements.append({
+            'height': height,
+            'shadow': shadow,
+            'day_of_year': day_of_year,
+            'local_hour': local_hour,
+            'pitch': pitch,
+            'roll': roll,
+            'ground_pitch': ground_pitch,
+            'ground_roll': ground_roll
+        })
+
+    calc = ShadowCalculator(utc_offset=utc_offset, longitude=longitude)
+
+    if len(measurements) > 1:
+        result = calc.process_multiple(measurements)
+    else:
+        result = calc.process_measurement(measurements[0])
+
+    print("\nEredmény JSON formátumban:")
+    print(json.dumps(result, indent=2))
+    with open("shadow_results.json", "w") as f:
+        json.dump(result, f, indent=2)
+    print("Eredmények elmentve: shadow_results.json")
