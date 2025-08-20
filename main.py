@@ -18,6 +18,7 @@ class OSINTApp(ctk.CTk):
         ctk.set_default_color_theme("blue")
         OSINTApp.exif_reading = exif_reading
         OSINTApp.haar_detection = haar_detection
+        OSINTApp.shadow_analysis = self.shadow_analysis
 
 
 
@@ -140,9 +141,9 @@ class OSINTApp(ctk.CTk):
         try:
             modules = [
                 lambda: self.exif_reading(self.image_path),
-                self.run_haar_detection,  # Új metódus a Haar detekcióhoz
+                self.run_haar_detection,
                 self.plate_recognition,
-                self.shadow_analysis
+                lambda: self.shadow_analysis(self.image_path)  # <- Lambda formában kell meghívni
             ]
 
             for module in modules:
@@ -200,43 +201,33 @@ class OSINTApp(ctk.CTk):
             self.log("error", "PLATE", f"Hiba: {str(e)}")
 
 
-def shadow_analysis(self):
-    """Árnyék alapú helymeghatározás"""
-    try:
-        self.log("info", "SHADOW", "Árnyékok elemzése...")
-
-        # 1) Árnyék irány detektálása a képből
-        shadow_data = detect_shadow(self.image_path)
-
-        if not shadow_data or shadow_data["shadow_direction"] is None:
-            self.log("warning", "SHADOW", "Nem sikerült elemezni az árnyékokat.")
-            return
-
-        # 2) Szélesség becslés (ha van méréstámogatás: időpont, magasság, árnyék hossza)
-        calc = detect_shadow(self.image_path)
-
-        # itt pl. dummy measurement
-        measurement = {
-            "height": 1.0,
-            "shadow": 2.0,
-            "day_of_year": 200,
-            "local_hour": 14.0
-        }
-        result = calc.process_measurement(measurement)
-
-        # 3) Megjelenítés
-        angle = shadow_data["shadow_direction"]
-        lat = result["latitude_deg"]
-
-        if "detected_lines" in shadow_data:
-            for (x1,y1,x2,y2) in shadow_data["detected_lines"]:
-                self.canvas.create_line(x1, y1, x2, y2, fill="#54a0ff", width=2)
-
-        self.log("success", "SHADOW", f"Árnyék iránya: {angle:.1f}°")
-        self.log("success", "SHADOW", f"Becsült szélességi fok: ~{lat:.1f}°N")
-
-    except Exception as e:
-        self.log("error", "SHADOW", f"Hiba: {str(e)}")
+    def shadow_analysis(self, image_path):
+        """
+        Árnyék elemzés végrehajtása a képen
+        """
+        try:
+            result = detect_shadow(image_path)
+            
+            # Eredmények logolása
+            if result.get("shadow_direction") is not None:
+                self.log("success", "SHADOW", f"Árnyék irány: {result['shadow_direction']:.2f}°")
+            else:
+                self.log("warning", "SHADOW", "Nem sikerült árnyék irányt meghatározni")
+                
+            # Vonalak kirajzolása a képre
+            if result.get("detected_lines"):
+                for line in result["detected_lines"]:
+                    x1, y1, x2, y2 = line[0]
+                    self.canvas.create_line(x1, y1, x2, y2, fill="blue", width=2)
+            
+            return result
+            
+        except ImportError:
+            self.log("error", "SHADOW", "Árnyék analízis modul nem található")
+            return {"error": "Shadow analysis module missing"}
+        except Exception as e:
+            self.log("error", "SHADOW", f"Árnyék analízis hiba: {e}")
+            return {"error": str(e)}
 
 
 # --- Indítás ---
