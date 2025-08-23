@@ -7,6 +7,8 @@ import time
 from algorithms.exif import exif_reading
 from algorithms.haar import haar_detection
 from algorithms.shadowcalc import detect_shadow
+from algorithms.plate_rec import create_db, plate_recognition
+
 
 
 class OSINTApp(ctk.CTk):
@@ -19,6 +21,8 @@ class OSINTApp(ctk.CTk):
         OSINTApp.exif_reading = exif_reading
         OSINTApp.haar_detection = haar_detection
         OSINTApp.shadow_analysis = self.shadow_analysis
+
+        create_db()
 
 
 
@@ -56,7 +60,7 @@ class OSINTApp(ctk.CTk):
         menubar.add_cascade(label="OSINT", menu=osint_menu)
 
         # About menü
-        menubar.add_command(label="About", command=lambda: self.log("info", "APP", "OSINT Tool v1.0"))
+        menubar.add_command(label="About", command=lambda: self.log("info", "APP", "OSINT Tool v1.0\n Made by Domesco"))
         self.configure(menu=menubar)
 
     def create_image_canvas(self):
@@ -142,9 +146,10 @@ class OSINTApp(ctk.CTk):
             modules = [
                 lambda: self.exif_reading(self.image_path),
                 self.run_haar_detection,
-                self.plate_recognition,
-                lambda: self.shadow_analysis(self.image_path)  # <- Lambda formában kell meghívni
+                self.plate_recognition_module,  # ide
+                lambda: self.shadow_analysis(self.image_path)
             ]
+
 
             for module in modules:
                 if not self.is_running:
@@ -184,21 +189,22 @@ class OSINTApp(ctk.CTk):
 
 
 
+    def plate_recognition_module(self):
+        """Rendszám felismerés a már betöltött képen"""
+        if not self.image_path:
+            self.log("error", "PLATE", "Nincs kép betöltve!")
+            return
 
+        self.log("info", "PLATE", "Rendszám felismerés indítása...")
+        result = plate_recognition(self.image_path)  # modulból importált függvény
+        if result:
+            plate = result["plate"]
+            db_info = result["db_info"]
+            output = f"Rendszám: {plate}\nAdatok: {db_info}"
+            self.log("success", "PLATE", output)
+        else:
+            self.log("warning", "PLATE", "Rendszám felismerés sikertelen.")
 
-
-
-    def plate_recognition(self):
-        """Rendszámfelismerés"""
-        try:
-            self.log("info", "PLATE", "Rendszámok keresése...")
-            time.sleep(2)
-            
-            fake_plate = "ABC-123"
-            self.canvas.create_text(400, 50, text=fake_plate, fill="#feca57", font=("Arial", 20))
-            self.log("success", "PLATE", f"Rendszám: {fake_plate}")
-        except Exception as e:
-            self.log("error", "PLATE", f"Hiba: {str(e)}")
 
 
     def shadow_analysis(self, image_path):
