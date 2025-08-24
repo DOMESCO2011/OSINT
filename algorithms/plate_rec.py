@@ -5,13 +5,21 @@ import numpy as np
 import sqlite3
 import pytesseract
 import easyocr
-import requests
 
-# EasyOCR reader létrehozása egyszer
+# EasyOCR reader egyszeri inicializálás
 reader = easyocr.Reader(['en'], gpu=False)
 
 # ------------------------------
-# ADATBÁZIS LÉTREHOZÁS
+# SZIMULÁLT ADATBÁZIS
+# ------------------------------
+SIMULATED_DB = {
+    "H-ABC123": {"owner": "Kovács János", "color": "Kék", "year": 2018, "make": "Toyota", "model": "Corolla"},
+    "H-RAP235": {"owner": "Nagy Péter", "color": "Fekete", "year": 2019, "make": "Ford", "model": "Focus"},
+    "D-XYZ789": {"owner": "Müller Anna", "color": "Fehér", "year": 2020, "make": "Volkswagen", "model": "Golf"},
+}
+
+# ------------------------------
+# ADATBÁZIS LÉTREHOZÁS (OPCIONÁLIS)
 # ------------------------------
 def create_db(db_path="plates.db"):
     """Adatbázis létrehozása (ha még nem létezik)"""
@@ -37,31 +45,26 @@ def create_db(db_path="plates.db"):
 # RENDSZÁM NORMALIZÁLÁS
 # ------------------------------
 def correct_plate(text):
-    """Rendszám normalizálás, opcionális első karakter korrekció"""
     if text is None:
         return None, None
-    
-    text = text.strip().upper()
-    text = text.replace(" ", "")
-    
-    # Fix első karakter hiba: I → R, ha első 3 karakter betű
+    text = text.strip().upper().replace(" ", "")
+
+    # Első karakter javítása I -> R ha kell
     if len(text) >= 4 and text[0] == "I" and text[1:4].isalpha():
         text = "R" + text[1:]
 
     # Országkód és rendszám szétválasztása
     country_code_pattern = r'^([A-Z]{1,3})[\-]*([A-Z0-9]+)$'
     match = re.match(country_code_pattern, text)
-    
     if match:
         country_code = match.group(1)
         plate_number = match.group(2)
     else:
         country_code = None
         plate_number = text
-    
+
     valid_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"
     plate_number = ''.join(c for c in plate_number if c in valid_chars)
-    
     return plate_number, country_code
 
 # ------------------------------
@@ -71,7 +74,7 @@ def preprocess_plate(plate_img):
     gray = cv2.cvtColor(plate_img, cv2.COLOR_BGR2GRAY)
     gray = cv2.bilateralFilter(gray, 11, 17, 17)
     gray = cv2.equalizeHist(gray)
-    thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+    thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                                   cv2.THRESH_BINARY, 11, 2)
     kernel = np.ones((2, 2), np.uint8)
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
@@ -82,9 +85,6 @@ def preprocess_plate(plate_img):
 # MULTI-OCR FUNKCIÓ
 # ------------------------------
 def ocr_multi_method(plate_img):
-    """
-    Több OCR metódus kipróbálása és legjobb eredmény kiválasztása
-    """
     candidates = []
 
     # 1. Tesseract
@@ -121,7 +121,7 @@ def detect_plates_simple(img):
     edged = cv2.Canny(gray, 30, 200)
     contours, _ = cv2.findContours(edged, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     contours = sorted(contours, key=cv2.contourArea, reverse=True)[:10]
-    
+
     plate_contours = []
     for contour in contours:
         peri = cv2.arcLength(contour, True)
@@ -143,11 +143,7 @@ def enhance_country_code_detection(plate_img, initial_country_code):
         return initial_country_code
     try:
         height, width = plate_img.shape[:2]
-        regions = [
-            plate_img[:, :width//4],
-            plate_img[:, :width//3],
-            plate_img[:, :width//2],
-        ]
+        regions = [plate_img[:, :width//4], plate_img[:, :width//3], plate_img[:, :width//2]]
         for region in regions:
             gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
             gray = cv2.GaussianBlur(gray, (3, 3), 0)
@@ -161,34 +157,9 @@ def enhance_country_code_detection(plate_img, initial_country_code):
         return None
 
 # ------------------------------
-# ONLINE API LEKÉRDEZÉS
+# TELJES MULTI-OCR + SZIMULÁLT DB
 # ------------------------------
-def query_online_database(self, plate_number, country_code=None, api_key=None, api_url=None):
-    if not api_url:
-        self.log("error", "[API]", "Nincs megadva API URL!")
-        return None
-    if not api_key:
-        self.log("error", "[API]", "Nincs megadva API kulcs!")
-        return None
-    try:
-        payload = {"plate": plate_number, "country_code": country_code}
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        response = requests.post(api_url, json=payload, headers=headers, timeout=10)
-        if response.status_code == 200:
-            self.log("info", "[API]", f"Sikeres lekérdezés: {plate_number} ({country_code})")
-            return response.json()
-        else:
-            self.log("warn", "[API]", f"Hiba: {response.status_code} - {response.text}")
-            return None
-    except Exception as e:
-        self.log("error", "[API]", f"Lekérdezési hiba: {e}")
-        return None
-
-# ------------------------------
-# TELJES MULTI-OCR + API RENDSZÁM FELISMERÉS
-# ------------------------------
-def plate_recognition(self, image_path, use_online_db=False, api_key=None, api_url=None):
-    """Teljes multi-OCR + online API rendszám felismerés"""
+def plate_recognition(self, image_path):
     try:
         if not os.path.exists(image_path):
             self.log("error", "[PLATE]", f"A képfájl nem található: {image_path}")
@@ -200,8 +171,7 @@ def plate_recognition(self, image_path, use_online_db=False, api_key=None, api_u
 
         height, width = img.shape[:2]
         if width > 1000:
-            scale = 1000 / width
-            img = cv2.resize(img, (1000, int(height * scale)))
+            img = cv2.resize(img, (1000, int(height * 1000 / width)))
 
         plate_contours = detect_plates_simple(img)
         if not plate_contours:
@@ -217,21 +187,16 @@ def plate_recognition(self, image_path, use_online_db=False, api_key=None, api_u
             if not plate_text or len(plate_text) < 4:
                 continue
 
-            online_info = None
-            if use_online_db and api_key and api_url:
-                online_info = self.query_online_database(plate_text, country_code, api_key, api_url)
-
             plate_data = {
                 "plate": plate_text,
                 "country_code": country_code,
                 "position": (x, y, w, h),
-                "local_db_info": None,  # kompatibilitás
-                "online_info": online_info
+                "local_db_info": SIMULATED_DB.get(f"{country_code}-{plate_text}", None),
+                "online_info": None
             }
             results.append(plate_data)
 
         return results
-
     except Exception as e:
         import traceback
         self.log("error", "[OSINT]", f"Kritikus hiba: {e}\n{traceback.format_exc()}")
