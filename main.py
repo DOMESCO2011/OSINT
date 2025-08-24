@@ -1,13 +1,4 @@
-import customtkinter as ctk
-import tkinter as tk
-from tkinter import filedialog
-from PIL import Image, ImageTk
-import threading
-import time
-from algorithms.exif import exif_reading
-from algorithms.haar import haar_detection
-from algorithms.shadowcalc import detect_shadow
-from algorithms.plate_rec import create_db, plate_recognition
+from imports import *
 
 
 
@@ -196,14 +187,57 @@ class OSINTApp(ctk.CTk):
             return
 
         self.log("info", "PLATE", "Rendszám felismerés indítása...")
-        result = plate_recognition(self.image_path)  # modulból importált függvény
-        if result:
-            plate = result["plate"]
-            db_info = result["db_info"]
-            output = f"Rendszám: {plate}\nAdatok: {db_info}"
-            self.log("success", "PLATE", output)
+        
+        # Rendszámok felismerése
+        results = plate_recognition(self.image_path, use_online_db=False)
+        
+        if results:
+            for result in results:
+                plate = result["plate"]
+                country_code = result["country_code"]
+                x, y, w, h = result["position"]
+                
+                # Keret rajzolása a képre
+                self.canvas.create_rectangle(x, y, x+w, y+h, outline="yellow", width=2)
+                
+                # Szöveg hozzáadása a képhez (országkóddal együtt)
+                label = f"{country_code} {plate}" if country_code else plate
+                self.canvas.create_text(x, y-15, text=label, fill="yellow", font=("Arial", 12))
+                
+                # Információk összeállítása
+                info_text = f"Rendszám: {plate}"
+                if country_code:
+                    info_text += f"\nOrszágkód: {country_code}"
+                
+                # Lokális adatbázis információ
+                if result["local_db_info"]:
+                    db_info = result["local_db_info"]
+                    info_text += f"\nTulajdonos: {db_info[1]}\nSzín: {db_info[2]}\nÉvjárat: {db_info[3]}"
+                    if len(db_info) > 4 and db_info[4]:  # Márka
+                        info_text += f"\nMárka: {db_info[4]}"
+                    if len(db_info) > 5 and db_info[5]:  # Modell
+                        info_text += f"\nModell: {db_info[5]}"
+                    if len(db_info) > 6 and db_info[6]:  # Országkód
+                        info_text += f"\nOrszág: {db_info[6]}"
+                
+                # Online információ
+                if result["online_info"]:
+                    online_info = result["online_info"]
+                    info_text += f"\n--- Online információk ---"
+                    if "owner" in online_info:
+                        info_text += f"\nTulajdonos: {online_info['owner']}"
+                    if "make" in online_info:
+                        info_text += f"\nMárka: {online_info['make']}"
+                    if "model" in online_info:
+                        info_text += f"\nModell: {online_info['model']}"
+                    if "country" in online_info:
+                        info_text += f"\nOrszág: {online_info['country']}"
+                
+                self.log("success", "PLATE", info_text)
+                
+            self.log("success", "PLATE", f"{len(results)} rendszám felismerve.")
         else:
-            self.log("warning", "PLATE", "Rendszám felismerés sikertelen.")
+            self.log("warning", "PLATE", "Nem található rendszám a képen.")
 
 
 
