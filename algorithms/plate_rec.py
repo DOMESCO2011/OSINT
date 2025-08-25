@@ -4,10 +4,10 @@ import cv2
 import numpy as np
 import sqlite3
 import pytesseract
-import easyocr
+
 
 # EasyOCR reader egyszeri inicializálás
-reader = easyocr.Reader(['en'], gpu=False)
+
 
 # ------------------------------
 # SZIMULÁLT ADATBÁZIS
@@ -95,11 +95,6 @@ def ocr_multi_method(plate_img):
         text = pytesseract.image_to_string(processed, config=config).strip().upper().replace(" ", "")
         if text: candidates.append(text)
 
-    # EasyOCR
-    result = reader.readtext(plate_img)
-    for bbox, text, conf in result:
-        text = text.upper().replace(" ", "")
-        if text: candidates.append(text)
 
     best_text = ""
     for text in candidates:
@@ -155,18 +150,25 @@ def enhance_country_code_detection(plate_img, initial_country_code):
 # ------------------------------
 # TELJES MULTI-OCR + SZIMULÁLT DB
 # ------------------------------
-def plate_recognition(self, image_path, *args, **kwargs):
+def plate_recognition(image_path, log_func=None, *args, **kwargs):
     """
     Teljesen offline, multi-OCR rendszám felismerés.
-    Minden régi argumentum kompatibilis: use_online_db, api_key, api_url stb.
+    log_func: külső logoló függvény (type, sender, message) paraméterekkel
     """
     try:
         if not os.path.exists(image_path):
-            self.log("error", "[PLATE]", f"A képfájl nem található: {image_path}")
+            if log_func:
+                log_func("error", "PLATE", f"A képfájl nem található: {image_path}")
+            else:
+                print(f"[PLATE] A képfájl nem található: {image_path}")
             return None
+        
         img = cv2.imread(image_path)
         if img is None:
-            self.log("error", "[PLATE]", "Nem sikerült betölteni a képet.")
+            if log_func:
+                log_func("error", "PLATE", "Nem sikerült betölteni a képet.")
+            else:
+                print("[PLATE] Nem sikerült betölteni a képet.")
             return None
 
         height, width = img.shape[:2]
@@ -175,7 +177,10 @@ def plate_recognition(self, image_path, *args, **kwargs):
 
         plate_contours = detect_plates_simple(img)
         if not plate_contours:
-            self.log("info", "[PLATE]", "Nem található rendszám a képen.")
+            if log_func:
+                log_func("info", "PLATE", "Nem található rendszám a képen.")
+            else:
+                print("[PLATE] Nem található rendszám a képen.")
             return None
 
         results = []
@@ -197,7 +202,11 @@ def plate_recognition(self, image_path, *args, **kwargs):
             results.append(plate_data)
 
         return results
+        
     except Exception as e:
         import traceback
-        self.log("error", "[OSINT]", f"Kritikus hiba: {e}\n{traceback.format_exc()}")
+        if log_func:
+            log_func("error", "PLATE", f"Kritikus hiba: {e}\n{traceback.format_exc()}")
+        else:
+            print(f"[PLATE] Kritikus hiba: {e}\n{traceback.format_exc()}")
         return None

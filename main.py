@@ -179,17 +179,20 @@ class OSINTApp(ctk.CTk):
     # --- Algoritmus Modulok ---
 
 
-
-    def plate_recognition_module(self):
+    def plate_recognition_module(self, image_path=None):
         """Rendszám felismerés a már betöltött képen"""
-        if not self.image_path:
+        if image_path is None:
+            image_path = self.image_path
+        
+        if not image_path:
             self.log("error", "PLATE", "Nincs kép betöltve!")
             return
 
         self.log("info", "PLATE", "Rendszám felismerés indítása...")
         
-        # Rendszámok felismerése
-        results = plate_recognition(self.image_path, use_online_db=False)
+        # Átadjuk a log függvényt a plate_recognition-nak
+        results = plate_recognition(image_path, log_func=self.log, use_online_db=False)
+        # ... a többi kód változatlan ...
         
         if results:
             for result in results:
