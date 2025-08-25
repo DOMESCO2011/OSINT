@@ -15,7 +15,7 @@ from PIL.ExifTags import TAGS, GPSTAGS
 import os
 import hashlib
 
-from algorithms.exif import exif_reading
+from algorithms.meta import exif_reading
 from algorithms.haar import haar_detection
 from algorithms.shadowcalc import detect_shadow
 from algorithms.plate_rec import create_db, plate_recognition
