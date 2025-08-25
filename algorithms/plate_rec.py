@@ -22,7 +22,6 @@ SIMULATED_DB = {
 # ADATBÁZIS LÉTREHOZÁS (OPCIONÁLIS)
 # ------------------------------
 def create_db(db_path="plates.db"):
-    """Adatbázis létrehozása (ha még nem létezik)"""
     try:
         conn = sqlite3.connect(db_path)
         c = conn.cursor()
@@ -49,11 +48,9 @@ def correct_plate(text):
         return None, None
     text = text.strip().upper().replace(" ", "")
 
-    # Első karakter javítása I -> R ha kell
     if len(text) >= 4 and text[0] == "I" and text[1:4].isalpha():
         text = "R" + text[1:]
 
-    # Országkód és rendszám szétválasztása
     country_code_pattern = r'^([A-Z]{1,3})[\-]*([A-Z0-9]+)$'
     match = re.match(country_code_pattern, text)
     if match:
@@ -87,7 +84,7 @@ def preprocess_plate(plate_img):
 def ocr_multi_method(plate_img):
     candidates = []
 
-    # 1. Tesseract
+    # Tesseract
     processed = preprocess_plate(plate_img)
     configs = [
         r'--oem 3 --psm 8 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-',
@@ -98,13 +95,12 @@ def ocr_multi_method(plate_img):
         text = pytesseract.image_to_string(processed, config=config).strip().upper().replace(" ", "")
         if text: candidates.append(text)
 
-    # 2. EasyOCR
+    # EasyOCR
     result = reader.readtext(plate_img)
     for bbox, text, conf in result:
         text = text.upper().replace(" ", "")
         if text: candidates.append(text)
 
-    # Legjobb jelölt kiválasztása: legtöbb alfanumerikus karakter
     best_text = ""
     for text in candidates:
         if sum(c.isalnum() for c in text) > sum(c.isalnum() for c in best_text):
@@ -159,7 +155,11 @@ def enhance_country_code_detection(plate_img, initial_country_code):
 # ------------------------------
 # TELJES MULTI-OCR + SZIMULÁLT DB
 # ------------------------------
-def plate_recognition(self, image_path):
+def plate_recognition(self, image_path, *args, **kwargs):
+    """
+    Teljesen offline, multi-OCR rendszám felismerés.
+    Minden régi argumentum kompatibilis: use_online_db, api_key, api_url stb.
+    """
     try:
         if not os.path.exists(image_path):
             self.log("error", "[PLATE]", f"A képfájl nem található: {image_path}")

@@ -137,7 +137,7 @@ class OSINTApp(ctk.CTk):
             modules = [
                 lambda: self.exif_reading(self.image_path),
                 self.run_haar_detection,
-                self.plate_recognition_module,  # ide
+                lambda: self.plate_recognition_module(self.image_path),  # ide
                 lambda: self.shadow_analysis(self.image_path)
             ]
 
